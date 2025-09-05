@@ -2,6 +2,8 @@ import asyncio
 import subprocess
 import base64
 import shutil
+import binascii
+from database.XYBotDB import XYBotDB
 
 import tomllib
 import os
@@ -28,8 +30,10 @@ class ZyDouyiParser(PluginBase):
 
     def __init__(self):
         super().__init__()
+        self.db = XYBotDB()
         # 加载配置文件
         self.load_config()
+
 
     def load_config(self):
         with open("plugins/ZyDouyinParser/config.toml", "rb") as f:
@@ -136,7 +140,8 @@ class ZyDouyiParser(PluginBase):
     async def handle_text(self, bot: WechatAPIClient, message: dict):
         if not self.enable:
             return
-
+        query_wxid = message["SenderWxid"]
+        
         content = message["Content"].strip()
         group_id = message["FromWxid"]
 
@@ -198,6 +203,10 @@ class ZyDouyiParser(PluginBase):
                                 group_id,
                                 video=video_base64,
                                 image=image_base64 or "None",
+                            )
+                            self.db.add_points(query_wxid, -5)
+                            await bot.send_text_message(
+                                group_id, "视频解析成功，扣减5积分。"
                             )
                             logger.info(f"成功发送视频到 {group_id}")
 
