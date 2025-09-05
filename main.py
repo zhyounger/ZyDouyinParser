@@ -27,7 +27,7 @@ class ZyDouyiParser(PluginBase):
         self.load_config()
 
     def load_config(self):
-        with open("plugins/Zy-douyin/config.toml", "rb") as f:
+        with open("plugins/ZyDouyinParser/config.toml", "rb") as f:
             config = tomllib.load(f)
 
         config = config["ZyDouyinParser"]
