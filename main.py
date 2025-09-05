@@ -65,7 +65,7 @@ class ZyDouyiParser(PluginBase):
                 logger.debug(f"抖音解析结果: {result}")
                 # 组装卡片消息
                 # await self._send_video_card(bot, group_id, result)
-                await bot.send_text_message(group_id, result)
+                await bot.send_text_message(group_id, '原始链接为：' + result.url)
 
             except VideoParserError as e:
                 logger.error(f"解析抖音视频失败: {str(e)}")
