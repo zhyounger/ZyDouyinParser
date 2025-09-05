@@ -34,7 +34,6 @@ class ZyDouyiParser(PluginBase):
         # 加载配置文件
         self.load_config()
 
-
     def load_config(self):
         with open("plugins/ZyDouyinParser/config.toml", "rb") as f:
             config = tomllib.load(f)
@@ -68,7 +67,6 @@ class ZyDouyiParser(PluginBase):
         except Exception as e:
             logger.exception(f"检查 ffmpeg 失败: {e}")
             return False
-
 
     async def _download_video(self, video_url: str) -> bytes:
         """下载视频文件"""
@@ -134,14 +132,12 @@ class ZyDouyiParser(PluginBase):
             # 清理临时文件
             shutil.rmtree(temp_dir, ignore_errors=True)  # 递归删除临时文件夹
 
-
-
     @on_text_message(priority=10)
     async def handle_text(self, bot: WechatAPIClient, message: dict):
         if not self.enable:
             return
         query_wxid = message["SenderWxid"]
-        
+
         content = message["Content"].strip()
         group_id = message["FromWxid"]
 
@@ -165,6 +161,7 @@ class ZyDouyiParser(PluginBase):
             try:
                 # 直接调用本地解析逻辑
                 result = await self.parse_video(douyin_url)
+                await bot.send_text_message(group_id, f"正在解析视频...{result}")
                 logger.debug(f"抖音解析结果: {result}")
                 # 发送视频源链接
                 # await bot.send_text_message(group_id, "原始链接为：" + result)
@@ -199,14 +196,18 @@ class ZyDouyiParser(PluginBase):
                             )
 
                             # 发送视频消息
+                            await bot.send_at_message(
+                                group_id, "发送中，请稍候...", [query_wxid]
+                            )
                             await bot.send_video_message(
                                 group_id,
                                 video=video_base64,
                                 image=image_base64 or "None",
                             )
+                            # 扣减5积分
                             self.db.add_points(query_wxid, -5)
-                            await bot.send_text_message(
-                                group_id, "视频解析成功，扣减5积分。"
+                            await bot.send_at_message(
+                                group_id, "视频解析成功，扣减5积分。", [query_wxid]
                             )
                             logger.info(f"成功发送视频到 {group_id}")
 
