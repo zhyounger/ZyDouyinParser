@@ -1,9 +1,14 @@
+import asyncio
+import subprocess
+import base64
+import shutil
+
 import tomllib
 import os
 import re
 import aiohttp
 import ssl
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from utils.plugin_base import PluginBase
 from WechatAPI.Client import WechatAPIClient
@@ -33,6 +38,99 @@ class ZyDouyiParser(PluginBase):
         config = config["ZyDouyinParser"]
         self.enable = config["enable"]
         self.allowed_groups = config["allowed_groups"]
+        self.ffmpeg_path = config.get("ffmpeg_path", "/usr/bin/ffmpeg")  # ffmpeg 路径
+        self.video_sources = config.get("video_sources", [])  # 视频源列表
+
+        logger.info("ZyDouyinParser 插件配置加载成功")
+        self.ffmpeg_available = self._check_ffmpeg()  # 在配置加载完成后检查 ffmpeg
+
+    def _check_ffmpeg(self) -> bool:
+        """检查 ffmpeg 是否可用"""
+        try:
+            process = subprocess.run(
+                [self.ffmpeg_path, "-version"], check=False, capture_output=True
+            )
+            if process.returncode == 0:
+                logger.info(f"ffmpeg 可用，版本信息：{process.stdout.decode()}")
+                return True
+            else:
+                logger.warning(
+                    f"ffmpeg 执行失败，返回码: {process.returncode}，错误信息: {process.stderr.decode()}"
+                )
+                return False
+        except FileNotFoundError:
+            logger.warning(f"ffmpeg 未找到，路径: {self.ffmpeg_path}")
+            return False
+        except Exception as e:
+            logger.exception(f"检查 ffmpeg 失败: {e}")
+            return False
+
+
+    async def _download_video(self, video_url: str) -> bytes:
+        """下载视频文件"""
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as session:
+                async with session.get(video_url) as response:
+                    if response.status == 200:
+                        video_data = await response.read()
+                        logger.debug(f"下载的视频数据大小: {len(video_data)} bytes")
+                        return video_data
+                    else:
+                        logger.error(f"下载视频失败，状态码: {response.status}")
+                        return b""  # 返回空字节
+        except Exception as e:
+            logger.exception(f"下载视频过程中发生异常: {e}")
+            return b""  # 返回空字节
+
+    async def _extract_thumbnail_from_video(self, video_data: bytes) -> Optional[str]:
+        """从视频数据中提取缩略图"""
+        temp_dir = "temp_videos"  # 创建临时文件夹
+        os.makedirs(temp_dir, exist_ok=True)
+        video_path = os.path.join(temp_dir, "temp_video.mp4")
+        thumbnail_path = os.path.join(temp_dir, "temp_thumbnail.jpg")
+
+        try:
+            with open(video_path, "wb") as f:
+                f.write(video_data)
+
+            # 异步执行 ffmpeg 命令
+            process = await asyncio.create_subprocess_exec(
+                self.ffmpeg_path,
+                "-i",
+                video_path,
+                "-ss",
+                "00:00:01",  # 从视频的第 1 秒开始提取
+                "-vframes",
+                "1",
+                thumbnail_path,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            stdout, stderr = await process.communicate()
+
+            if process.returncode != 0:
+                logger.error(f"ffmpeg 执行失败: {stderr.decode()}")
+                return None
+
+            with open(thumbnail_path, "rb") as image_file:
+                image_data = image_file.read()
+                image_base64 = base64.b64encode(image_data).decode("utf-8")
+                return image_base64
+
+        except FileNotFoundError:
+            logger.error("ffmpeg 未找到，无法提取缩略图")
+            return None
+        except Exception as e:
+            logger.exception(f"提取缩略图失败: {e}")
+            return None
+        finally:
+            # 清理临时文件
+            shutil.rmtree(temp_dir, ignore_errors=True)  # 递归删除临时文件夹
+
+
 
     @on_text_message(priority=10)
     async def handle_text(self, bot: WechatAPIClient, message: dict):
@@ -63,9 +161,63 @@ class ZyDouyiParser(PluginBase):
                 # 直接调用本地解析逻辑
                 result = await self.parse_video(douyin_url)
                 logger.debug(f"抖音解析结果: {result}")
-                # 组装卡片消息
-                # await self._send_video_card(bot, group_id, result)
-                await bot.send_text_message(group_id, '原始链接为：' + result)
+                # 发送视频源链接
+                # await bot.send_text_message(group_id, "原始链接为：" + result)
+                if result:
+                    logger.info(f"获取到视频链接: {result}")
+                    video_data = await self._download_video(result)
+
+                    if video_data:
+                        image_base64 = None
+                        if self.ffmpeg_available:
+                            # 获取缩略图
+                            image_base64 = await self._extract_thumbnail_from_video(
+                                video_data
+                            )
+
+                            if image_base64:
+                                logger.info("成功提取缩略图")
+                            else:
+                                logger.warning("未能成功提取缩略图")
+                        else:
+                            await bot.send_text_message(
+                                group_id, "由于 ffmpeg 未安装，无法提取缩略图。"
+                            )
+
+                        try:
+                            video_base64 = base64.b64encode(video_data).decode("utf-8")
+                            logger.debug(
+                                f"视频 Base64 长度: {len(video_base64) if video_base64 else '无效'}"
+                            )
+                            logger.debug(
+                                f"图片 Base64 长度: {len(image_base64) if image_base64 else '无效'}"
+                            )
+
+                            # 发送视频消息
+                            await bot.send_video_message(
+                                group_id,
+                                video=video_base64,
+                                image=image_base64 or "None",
+                            )
+                            logger.info(f"成功发送视频到 {group_id}")
+
+                        except binascii.Error as e:
+                            logger.error(f"Base64 编码失败： {e}")
+                            await bot.send_text_message(
+                                group_id, "视频编码失败，请稍后重试。"
+                            )
+
+                        except Exception as e:
+                            logger.exception(f"发送视频过程中发生异常: {e}")
+                            await bot.send_text_message(
+                                group_id, f"发送视频过程中发生异常，请稍后重试: {e}"
+                            )
+
+                    else:
+                        logger.warning(f"未能下载到有效的视频数据")
+                        await bot.send_text_message(
+                            group_id, "未能下载到有效的视频，请稍后重试。"
+                        )
 
             except VideoParserError as e:
                 logger.error(f"解析抖音视频失败: {str(e)}")
@@ -168,13 +320,14 @@ class ZyDouyiParser(PluginBase):
                     title_match = title_pattern.search(html_content)
                     author_match = author_pattern.search(html_content)
                     cover_match = cover_pattern.search(html_content)
-                    return video_url
+
                     # return {
                     #     "url": video_url,
                     #     "title": title_match.group(1) if title_match else "",
                     #     "author": author_match.group(1) if author_match else "",
                     #     "cover": cover_match.group(1) if cover_match else "",
                     # }
+                    return video_url
 
         except aiohttp.ClientError as e:
             raise VideoParserError(f"网络请求失败：{str(e)}")
