@@ -65,7 +65,7 @@ class ZyDouyiParser(PluginBase):
                 logger.debug(f"抖音解析结果: {result}")
                 # 组装卡片消息
                 # await self._send_video_card(bot, group_id, result)
-                await bot.send_text_message(group_id, '原始链接为：' + result.url)
+                await bot.send_text_message(group_id, '原始链接为：' + result)
 
             except VideoParserError as e:
                 logger.error(f"解析抖音视频失败: {str(e)}")
@@ -168,13 +168,13 @@ class ZyDouyiParser(PluginBase):
                     title_match = title_pattern.search(html_content)
                     author_match = author_pattern.search(html_content)
                     cover_match = cover_pattern.search(html_content)
-
-                    return {
-                        "url": video_url,
-                        "title": title_match.group(1) if title_match else "",
-                        "author": author_match.group(1) if author_match else "",
-                        "cover": cover_match.group(1) if cover_match else "",
-                    }
+                    return video_url
+                    # return {
+                    #     "url": video_url,
+                    #     "title": title_match.group(1) if title_match else "",
+                    #     "author": author_match.group(1) if author_match else "",
+                    #     "cover": cover_match.group(1) if cover_match else "",
+                    # }
 
         except aiohttp.ClientError as e:
             raise VideoParserError(f"网络请求失败：{str(e)}")
